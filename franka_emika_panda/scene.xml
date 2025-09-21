@@ -19,5 +19,21 @@
   <worldbody>
     <light pos="0 0 1.5" dir="0 0 -1" directional="true"/>
     <geom name="floor" size="0 0 0.05" type="plane" material="groundplane"/>
+
+    <body name="table" pos="0.5 0 0.2">  <!-- table center at x=0.5, z=0.2 -->
+      <geom name="table_top" type="box" size="0.4 0.4 0.02" rgba="0.8 0.6 0.4 1"/>  <!-- 0.8x0.8m top, thickness 0.04m -->
+      <!-- Table legs -->
+      <geom pos="0.38 0.38 -0.2" type="box" size="0.02 0.02 0.2" rgba="0.6 0.3 0.2 1"/>
+      <geom pos="-0.38 0.38 -0.2" type="box" size="0.02 0.02 0.2" rgba="0.6 0.3 0.2 1"/>
+      <geom pos="0.38 -0.38 -0.2" type="box" size="0.02 0.02 0.2" rgba="0.6 0.3 0.2 1"/>
+      <geom pos="-0.38 -0.38 -0.2" type="box" size="0.02 0.02 0.2" rgba="0.6 0.3 0.2 1"/>
+    </body>
+
+    <body name="block" pos="0.5 0 0.24">
+      <joint name="block_free" type="free"/>
+      <geom name="block_geom" type="box" size="0.05 0.05 0.05" rgba="0 0 1 1"/>
+      <inertial mass="0.1" pos="0 0 0" diaginertia="0.0001 0.0001 0.0001"/>
+    </body>
+
   </worldbody>
 </mujoco>
