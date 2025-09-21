@@ -1,24 +1,103 @@
+# Panda Joint Names & Motion
+# Joint	Name	Axis of rotation	Function / Motion Description
+# 1	panda_joint1	Z (vertical)	Base rotation — rotates entire arm left/right
+# 2	panda_joint2	Y	Shoulder pitch — lifts arm up/down
+# 3	panda_joint3	Z	Elbow yaw — rotates forearm left/right
+# 4	panda_joint4	Y	Elbow pitch — bends arm forward/backward
+# 5	panda_joint5	Z	Wrist yaw — rotates wrist left/right
+# 6	panda_joint6	Y	Wrist pitch — moves wrist up/down
+# 7	panda_joint7	Z	Wrist roll — rotates end-effector around its axis
+
 import mujoco.viewer
 import numpy as np
 import time
+from scipy.spatial.transform import Rotation as R
+import mujoco as mj
 
 # Helper function to compute joint positions for a target
-def ik_solve(target_pos, target_quat):
+def solve_ik(model, data, site_name, target_pos, target_quat, max_iters=2000, tol=1e-3, step_size=0.01):
     """
-    Solve for joint angles to reach a target Cartesian pose
-    target_pos: [x, y, z]
-    target_quat: [w, x, y, z]
+    Solve inverse kinematics for a Panda end-effector.
+
+    Parameters
+    ----------
+    model : MjModel
+    data : MjData
+    site_name : str
+        Name of the end-effector site
+    target_pos : np.array shape (3,)
+        Desired position
+    target_quat : np.array shape (4,)
+        Desired orientation as [w, x, y, z]
+    max_iters : int
+        Maximum IK iterations
+    tol : float
+        Convergence tolerance
+    step_size : float
+        Fraction of the computed dq to apply each iteration
+
+    Returns
+    -------
+    qpos : np.array
+        Joint positions that reach the target
     """
-    # ID of the end-effector
-    ee_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, "panda_hand")
+    # Find site ID
+    site_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_SITE, site_name)
+    print("site id", site_id)
+    if site_id == -1:
+        raise ValueError(f"Site '{site_name}' not found in model.")
 
-    # Current joint positions as initial guess
-    q_init = data.qpos.copy()
+    nv = model.nv  # number of DOFs
+    print("nv shape", nv)
+    qpos = data.qpos.copy()
+    print("data.qpos shape", np.shape(data.qpos))
+    for i in range(max_iters):
+        # Step simulation to update site frames
+        mj.mj_forward(model, data)
 
-    # Use MuJoCo IK solver
-    solved_qpos = mj.mj_kinematics(model, data, target_pos, target_quat, ee_id, q_init)
+        # Position error
+        current_pos = data.site_xpos[site_id].copy()
+        print("current_pos shape", np.shape(current_pos))
+        pos_err = target_pos - current_pos  # shape (3,)
 
-    return solved_qpos
+        # Orientation error using rotation matrix
+        current_mat = data.site_xmat[site_id].reshape(3, 3)  # current orientation
+        # MuJoCo uses [w, x, y, z].
+        # Scipy Rotation.from_quat expects [x, y, z, w]
+        target_rot = R.from_quat([target_quat[1], target_quat[2], target_quat[3], target_quat[0]]).as_matrix()
+        rot_err_mat = target_rot @ current_mat.T
+        r = R.from_matrix(rot_err_mat)
+        rot_err = r.as_rotvec()  # 3-vector axis-angle
+
+        # Combine position + orientation error
+        err = np.concatenate([pos_err, rot_err])  # shape (6,)
+        print("err shape", np.shape(err))
+        print("pos_err shape", np.shape(pos_err))
+        print("rot_err shape", np.shape(rot_err))
+        # Check convergence
+        print(f"Iter {i}, err norm: {np.linalg.norm(err):.4f}")
+        if np.linalg.norm(err) < tol:
+            return data.qpos[:7].copy()
+
+        # Compute Jacobian
+        jacp = np.zeros((3, nv))
+        jacr = np.zeros((3, nv))
+        mj.mj_jacSite(model, data, jacp, jacr, site_id)
+        J = np.vstack([jacp, jacr])  # shape (6, nv)
+
+        print(np.shape(J))
+        print(np.shape(err))
+        # Solve least squares
+        dq, *_ = np.linalg.lstsq(J, err, rcond=None)  # dq shape (nv,)
+        print("dq shape", np.shape(dq))
+        if dq.shape[0] != nv:
+            raise RuntimeError(f"dq shape mismatch: {dq.shape} vs nv={nv}")
+
+        # Apply update
+        data.qpos[:7] = data.qpos[:7] + dq[:7] * step_size
+        mj.mj_forward(model, data)  # update FK after applying step
+
+    raise RuntimeError("IK did not converge")
 
 class PID:
     def __init__(self, kp, ki, kd):
@@ -41,10 +120,10 @@ data = mujoco.MjData(model)
 arm_pids = [PID(1, 0.5, 0.2) for _ in range(7)]
 
 # Home joint configuration
-home_qpos = np.array([0, 0, 0, -1.57, 0, 1.57, -0.7853])
+home_qpos = np.array([0, 0, 0, -1.57, 0, 1.57, 0])
 
 # Finger open/close
-gripper_open = 0.04  # meters
+gripper_open = 0.4  # meters
 gripper_closed = 0.0
 
 dt = model.opt.timestep
@@ -56,25 +135,50 @@ block_z = 0.05      # block height
 gripper_offset = 0.1 # distance from wrist to gripper tip
 
 # Above block
-pick_above = np.array([0, 0, 0, -1.57, 0, 1.57, -0.7853])
-# Block top (z=0.05 + gripper)
-pick_down = pick_above + np.array([0, 0, 0, 0.1, 0, 0, 0])
-# Lift after grasp
-lift = pick_above + np.array([0, 0, 0.2, 0, 0, 0, 0])
-# Above table
-place_above = pick_above + np.array([0, 0.2, 0.2, 0, 0, 0, 0])
-# Place down on table (table z=0.2 + block 0.05)
-place_down = place_above + np.array([0, 0, -0.08, 0, 0, 0, 0])
+
+# --- Block parameters ---
+block_pos = np.array([0.6, 0.0, 0.2])
+block_height = 0.2
+block_top = block_pos[2] + block_height / 2.0  # 0.3
+
+# --- End-effector poses (position + orientation) ---
+gripper_clearance = 0.02  # small offset so gripper fingers aren't inside block
+
+pick_above = np.array([block_pos[0], block_pos[1], block_top + 0.5])   # hover
+pick_down  = np.array([block_pos[0], block_pos[1], block_top - gripper_clearance])  # touch block
+lift       = np.array([block_pos[0], block_pos[1], block_top + 0.5])   # after grasp
+
+# Orientation: gripper pointing down along -Z
+# 180° rotation about X axis = quaternion (x,y,z,w) = (1, 0, 0, 0)
+ee_quat = np.array([1.0, 0.0, 0.0, 0.0])
+
+# --- Solve IK for each waypoint ---
+def compute_pick_sequence(model, data):
+    q_pick_above = solve_ik(model, data, "panda_hand", pick_above, ee_quat)
+    q_pick_down  = solve_ik(model, data, "panda_hand", pick_down, ee_quat)
+    q_lift       = solve_ik(model, data, "panda_hand", lift, ee_quat)
+    print("q_pick_above", q_pick_above)
+    print("q_pick_down", q_pick_down)
+    print("q_lift", q_lift)
+
+    # block_z = 0.2
+    # gripper_offset = 0.107  # same as site pos
+    # pick_above = np.array([0.6, 0, block_z + gripper_offset + 0.05, 0, np.pi/2, 0, -np.pi/2])
+    # pick_down = np.array([0.6, 0, block_z + gripper_offset, 0, np.pi/2, 0, -np.pi/2])
+
+    return q_pick_above, q_pick_down, q_lift
+
+q_pick_above, q_pick_down, q_lift = compute_pick_sequence(model, data)
 
 sequence = [
-    (pick_above, gripper_open),
-    (pick_down, gripper_open),
-    (pick_down, gripper_closed),
-    (lift, gripper_closed),
-    (place_above, gripper_closed),
-    (place_down, gripper_closed),
-    (place_down, gripper_open),
-    (home_qpos, gripper_open)
+    (q_pick_above, gripper_open),
+    (q_pick_down, gripper_open),
+    (q_pick_down, gripper_closed),
+    (q_lift, gripper_closed),
+    # (place_above, gripper_closed),
+    # (place_down, gripper_closed),
+    # (place_down, gripper_open),
+    # (home_qpos, gripper_open)
 ]
 
 # ---------------- Simulation ----------------
@@ -87,7 +191,7 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
     while viewer.is_running():
         for target_qpos, target_finger in sequence:
             # Interpolate to make smooth motion
-            for _ in range(100):
+            for _ in range(1000):
                 torques = []
                 for i, idx in enumerate(arm_qpos_indices):
                     current = data.qpos[idx]
