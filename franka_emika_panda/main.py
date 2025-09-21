@@ -1,6 +1,24 @@
-import mujoco
 import mujoco.viewer
 import numpy as np
+import time
+
+# Helper function to compute joint positions for a target
+def ik_solve(target_pos, target_quat):
+    """
+    Solve for joint angles to reach a target Cartesian pose
+    target_pos: [x, y, z]
+    target_quat: [w, x, y, z]
+    """
+    # ID of the end-effector
+    ee_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, "panda_hand")
+
+    # Current joint positions as initial guess
+    q_init = data.qpos.copy()
+
+    # Use MuJoCo IK solver
+    solved_qpos = mj.mj_kinematics(model, data, target_pos, target_quat, ee_id, q_init)
+
+    return solved_qpos
 
 class PID:
     def __init__(self, kp, ki, kd):
@@ -20,31 +38,65 @@ model = mujoco.MjModel.from_xml_path("scene.xml")
 data = mujoco.MjData(model)
 
 # PID controllers for 7 main arm joints
-pids = [PID(1, 0.5, 0.2) for _ in range(7)]
+arm_pids = [PID(1, 0.5, 0.2) for _ in range(7)]
 
-# Target joint positions (radians) for the arm only
-target_qpos = np.array([0, -0.5, 1.5, -2.5, 0, 1.0, 0.5])
+# Home joint configuration
+home_qpos = np.array([0, 0, 0, -1.57, 0, 1.57, -0.7853])
 
-# Identify the indices of the 7 main joints in qpos
-# The first 7 revolute joints of the arm are usually the first 7 in the actuator mapping
-arm_joint_ids = [model.actuator_trnid[i,0] for i in range(7)]  # joints 0-6
-arm_qpos_indices = [model.jnt_qposadr[j] for j in arm_joint_ids]
+# Finger open/close
+gripper_open = 0.04  # meters
+gripper_closed = 0.0
 
 dt = model.opt.timestep
 
+# Arm qpos indices
+arm_qpos_indices = [model.jnt_qposadr[i] for i in range(7)]
+
+block_z = 0.05      # block height
+gripper_offset = 0.1 # distance from wrist to gripper tip
+
+# Above block
+pick_above = np.array([0, 0, 0, -1.57, 0, 1.57, -0.7853])
+# Block top (z=0.05 + gripper)
+pick_down = pick_above + np.array([0, 0, 0, 0.1, 0, 0, 0])
+# Lift after grasp
+lift = pick_above + np.array([0, 0, 0.2, 0, 0, 0, 0])
+# Above table
+place_above = pick_above + np.array([0, 0.2, 0.2, 0, 0, 0, 0])
+# Place down on table (table z=0.2 + block 0.05)
+place_down = place_above + np.array([0, 0, -0.08, 0, 0, 0, 0])
+
+sequence = [
+    (pick_above, gripper_open),
+    (pick_down, gripper_open),
+    (pick_down, gripper_closed),
+    (lift, gripper_closed),
+    (place_above, gripper_closed),
+    (place_down, gripper_closed),
+    (place_down, gripper_open),
+    (home_qpos, gripper_open)
+]
+
+# ---------------- Simulation ----------------
 with mujoco.viewer.launch_passive(model, data) as viewer:
-    viewer.cam.azimuth = 205      # rotate around vertical axis
-    viewer.cam.elevation = -30   # tilt up/down
-    viewer.cam.distance = 4.2    # distance from the look-at point
-    viewer.cam.lookat[:] = np.array([0, 0, 0.5])  # point the camera at a position
+    viewer.cam.azimuth = 205
+    viewer.cam.elevation = -30
+    viewer.cam.distance = 4.2
+    viewer.cam.lookat[:] = np.array([0.5, 0, 0.25])
+
     while viewer.is_running():
-        torques = []
-        for i, qpos_idx in enumerate(arm_qpos_indices):
-            current = data.qpos[qpos_idx]
-            torques.append(pids[i](target_qpos[i], current, dt))
+        for target_qpos, target_finger in sequence:
+            # Interpolate to make smooth motion
+            for _ in range(100):
+                torques = []
+                for i, idx in enumerate(arm_qpos_indices):
+                    current = data.qpos[idx]
+                    torques.append(arm_pids[i](target_qpos[i], current, dt))
+                data.ctrl[:7] = torques
 
-        # Apply torques to first 7 actuators (the arm)
-        data.ctrl[:7] = torques
+                # Finger control (map 0–0.04 m to 0–255)
+                data.ctrl[7] = np.clip((target_finger / 0.04) * 255, 0, 255)
 
-        mujoco.mj_step(model, data)
-        viewer.sync()
+                mujoco.mj_step(model, data)
+                viewer.sync()
+                time.sleep(0.01)
