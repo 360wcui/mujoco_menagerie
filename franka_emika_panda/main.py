@@ -23,7 +23,7 @@ data = mujoco.MjData(model)
 pids = [PID(1, 0.5, 0.2) for _ in range(7)]
 
 # Target joint positions (radians) for the arm only
-target_qpos = np.array([1, -0.5, 0, -1.5, 0, 1.0, 0.5])
+target_qpos = np.array([0, -0.5, 1.5, -2.5, 0, 1.0, 0.5])
 
 # Identify the indices of the 7 main joints in qpos
 # The first 7 revolute joints of the arm are usually the first 7 in the actuator mapping
@@ -33,6 +33,10 @@ arm_qpos_indices = [model.jnt_qposadr[j] for j in arm_joint_ids]
 dt = model.opt.timestep
 
 with mujoco.viewer.launch_passive(model, data) as viewer:
+    viewer.cam.azimuth = 205      # rotate around vertical axis
+    viewer.cam.elevation = -30   # tilt up/down
+    viewer.cam.distance = 4.2    # distance from the look-at point
+    viewer.cam.lookat[:] = np.array([0, 0, 0.5])  # point the camera at a position
     while viewer.is_running():
         torques = []
         for i, qpos_idx in enumerate(arm_qpos_indices):
