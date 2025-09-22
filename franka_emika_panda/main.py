@@ -18,7 +18,7 @@ data = mujoco.MjData(model)
 #     PID(1.1, 0.1, 0.3)  # joint 7 Wrist roll — rotates end-effector around its axis
 # ]
 arm_pids = [
-    PID(30, 1, 5),
+    PID(30, 2, 5),
     PID(25, 1, 5),
     PID(20, 1, 5),
     PID(15, 1, 3),
@@ -51,21 +51,28 @@ arm_qpos_indices = [model.jnt_qposadr[i] for i in range(7)]
 
 ee_quat = np.array([1.0, 0.0, 0.0, 0.0])
 block_pos = np.array([0.6, 0.0, 0.1])
+table_pos = np.array([0, 0.6, 0.1])
+
+hover_above = [block_pos[0], block_pos[1], block_pos[2] + 0.2]
+hover_close = [block_pos[0], block_pos[1], block_pos[2] + 0.05]
+hover_below = [block_pos[0], block_pos[1], block_pos[2] - 0.05]
+lift = [block_pos[0], block_pos[1], block_pos[2] + 0.4]
+place_above = [table_pos[0], table_pos[1], table_pos[2] + 0.3]
 
 
 sequence = [
-    ([block_pos[0], block_pos[1], block_pos[2] + 0.1], gripper_open),
-    ([block_pos[0], block_pos[1], block_pos[2] - 0.05], gripper_open),
-    ([block_pos[0], block_pos[1], block_pos[2] - 0.05], gripper_closed),
-    ([block_pos[0], block_pos[1], block_pos[2] + 0.2], gripper_closed),
-    ([block_pos[0], 0.2, block_pos[2] + 0.2], gripper_closed),
-    ([-block_pos[0], block_pos[1], block_pos[2] + 0.2], gripper_open),
-    ([-block_pos[0], block_pos[1], block_pos[2] + 0.2], gripper_open),
+    (hover_above, gripper_open),
+    (hover_below, gripper_open),
+    (hover_below, gripper_closed),
+    (lift, gripper_closed),
+    (place_above, gripper_closed),
+    (place_above, gripper_closed),
+    (place_above, gripper_open),
 ]
 
 # ---------------- Simulation ----------------
 with mujoco.viewer.launch_passive(model, data) as viewer:
-    viewer.cam.azimuth = 205
+    viewer.cam.azimuth = 125
     viewer.cam.elevation = -30
     viewer.cam.distance = 2.2
     viewer.cam.lookat[:] = np.array([0.5, 0, 0.25])
@@ -75,7 +82,7 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
             # Interpolate to make smooth motion
             q_guess = data.qpos[arm_qpos_indices].copy()
             target_qpos = ik_solve(waypoint, q_guess)
-            for _ in range(2000):
+            for _ in range(1500):
                 torques = []
                 for i, idx in enumerate(arm_qpos_indices):
                     current = data.qpos[idx]
@@ -83,7 +90,7 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
                 data.ctrl[:7] = torques
 
                 # Finger control (map 0–0.04 m to 0–255)
-                data.ctrl[7] = np.clip((target_finger / 0.04) * 255, 0, 255)
+                data.ctrl[7] = np.clip((target_finger / 0.04) * 500, 0, 500)
 
                 mujoco.mj_step(model, data)
                 viewer.sync()
