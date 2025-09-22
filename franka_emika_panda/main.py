@@ -50,7 +50,7 @@ dt = model.opt.timestep
 arm_qpos_indices = [model.jnt_qposadr[i] for i in range(7)]
 
 ee_quat = np.array([1.0, 0.0, 0.0, 0.0])
-block_pos = np.array([0.6, 0.0, 0.2])
+block_pos = np.array([0.6, 0.0, 0.1])
 
 
 sequence = [
