@@ -34,7 +34,7 @@
 
     <body name="block" pos="0.6 0 0.2">
       <joint name="block_free" type="free"/>
-      <geom name="block_geom" type="box" size="0.02 0.02 0.1" rgba="0 0 1 1"/>
+      <geom name="block_geom" type="box" size="0.03 0.02 0.1" rgba="0 0 1 1" mass="0.1"/>
 
     </body>
 
