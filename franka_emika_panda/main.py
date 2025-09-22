@@ -24,10 +24,8 @@ arm_pids = [
     PID(15, 1, 3),
     PID(10, 1, 3),
     PID(8, 0.6, 2),
-    PID(5, 0.2, 2)
+    PID(100, 2, 20)
 ]
-finger_pid = PID(100, 1, 5)
-max_torque = 500
 
 # --- Arm joint indices ---
 arm_qpos_indices = [0,1,2,3,4,5,6]
@@ -50,7 +48,7 @@ dt = model.opt.timestep
 arm_qpos_indices = [model.jnt_qposadr[i] for i in range(7)]
 
 ee_quat = np.array([1.0, 0.0, 0.0, 0.0])
-block_pos = np.array([0.6, 0.0, 0.2])
+block_pos = np.array([0.6, 0.0, 0.1])
 
 
 sequence = [
@@ -67,7 +65,7 @@ sequence = [
 with mujoco.viewer.launch_passive(model, data) as viewer:
     viewer.cam.azimuth = 205
     viewer.cam.elevation = -30
-    viewer.cam.distance = 2.2
+    viewer.cam.distance = 1.2
     viewer.cam.lookat[:] = np.array([0.5, 0, 0.25])
 
     while viewer.is_running():
@@ -75,7 +73,7 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
             # Interpolate to make smooth motion
             q_guess = data.qpos[arm_qpos_indices].copy()
             target_qpos = ik_solve(waypoint, q_guess)
-            for _ in range(2000):
+            for _ in range(1000):
                 torques = []
                 for i, idx in enumerate(arm_qpos_indices):
                     current = data.qpos[idx]
@@ -83,7 +81,7 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
                 data.ctrl[:7] = torques
 
                 # Finger control (map 0–0.04 m to 0–255)
-                data.ctrl[7] = np.clip((target_finger / 0.04) * 255, 0, 255)
+                data.ctrl[7] = np.clip((target_finger / 0.04) * 512, 0, 512)
 
                 mujoco.mj_step(model, data)
                 viewer.sync()
