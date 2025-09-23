@@ -1,3 +1,9 @@
+Sep 23 2025:
+To run the pick-and-place simulation using a frank_emika_panda robotic arm, follow the steps below.
+1. Install `conda` and all the dependencies defined in `environment.yml`
+2. activate the environment
+3. run `mjpython main.py`
+
 # Franka Emika Panda Description (MJCF)
 
 > [!IMPORTANT]
